@@ -1,0 +1,93 @@
+---
+title: "A reminder on early and late functions (for myself)"
+author: "Edward Gunning"
+date: "5/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(reshape2)
+```
+
+Ramsay & Silverman (2005, pg. 137-138)
+
+### Define functions
+
+```{r}
+in_val <- seq(0,1,by=0.01) # interval
+
+x0_t <- function(x){ # a function
+  sin(4*pi*x)
+}
+
+xearly_t <- function(x){ # an 'early' version
+  1.2*sin(4*pi*(x^0.8))
+}
+
+xlate_t <- function(x){ # a 'late' version
+  0.7*sin(4*pi*(x^1.2))
+}
+```
+
+
+### Define Warping Functions
+
+```{r}
+warp_early <- function(x){x^1.25}
+warp_late <- function(x){x^0.833}
+```
+
+### Visualise
+
+```{r, fig.width=10}
+p1 <- data.frame(time=in_val, normal=x0_t(in_val), early=xearly_t(in_val), late=xlate_t(in_val)) %>%
+  melt(id.vars=c("time"), variable.name="func_type") %>%
+  ggplot(aes(x=time, y=value, group=func_type))+
+  geom_line(aes(color=func_type, linetype=func_type), size=1)+
+  scale_color_manual(name="",values=c("black", "red", "blue"))+
+  theme_minimal()+
+  labs(title = "Un-registered Functions")+
+  guides(linetype=F)+
+  theme(legend.position = "top",
+        text = element_text(size=12))
+
+p2 <- data.frame(time=in_val, early=warp_early(in_val), late=warp_late(in_val)) %>%
+  melt(id.vars=c("time"), variable.name="func_type") %>%
+  ggplot()+
+  labs(title="Warping Functions")+
+  geom_line(aes(x=time,y=time), size=1)+
+  geom_line(aes(x=time,y=value, group=func_type, color=func_type, linetype=func_type), size=1)+
+  theme_minimal()+
+  scale_color_manual(values = c("red", "blue"))+
+  scale_linetype_manual(values=c("dotted", "dashed"))+
+  theme(legend.position = "none",
+        text = element_text(size=12))
+
+ggpubr::ggarrange(p1,p2, common.legend = T)
+```
+
+Important to note what the warping functions look like for an early or late function.
+
+Look at the effect of warping.
+
+```{r}
+Unreg <- data.frame(time=in_val, normal=x0_t(in_val), early=xearly_t(in_val), late=xlate_t(in_val), is_reg=rep("no", length(in_val))) %>%
+  melt(id.vars=c("time", "is_reg"), variable.name="func_type")
+
+Reg <- data.frame(time=in_val, normal=x0_t(in_val), early=xearly_t(warp_early(in_val)), late=xlate_t(warp_late(in_val)), is_reg=rep("yes", length(in_val))) %>% melt(id.vars=c("time", "is_reg"), variable.name="func_type")
+
+library(gganimate)
+bind_rows(Unreg, Reg) %>%
+  ggplot(aes(x=time, y=value, group=func_type))+
+  geom_line(aes(color=func_type, linetype=func_type), size=1)+
+  scale_color_manual(name="",values=c("black", "red", "blue"))+
+  theme_minimal()+
+  labs(title = "Un-registered Functions")+
+  guides(linetype=F)+
+  theme(legend.position = "top",
+        text = element_text(size=12))+
+  transition_states(states = is_reg)
+```
+
