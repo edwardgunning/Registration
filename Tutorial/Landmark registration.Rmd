@@ -1,0 +1,191 @@
+---
+title: "A Tutorial on Landmark Registration"
+author: "John Warmenhoven & Edward Gunning"
+date: "5/20/2020"
+output: html_document
+bibliography: bibliography.bibtex
+csl: applied-mathematics-letters.csl
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center')
+```
+
+```{r, fig.width=6, echo=F}
+knitr::include_graphics("meme.jpg")
+```
+```{r, echo=F}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 12)
+```
+# Preliminaries
+
+For any questions related to this tutorial (and script), please email john.warmenhoven@hotmail.com.
+
+All content from this tutorial can be found in two key texts. All theoretical information underpinning the use of these processes can be found in [@ramsay_2010_functional]. Additionally, a useful text outlining computational approaches for applying these processes in Matlab and R can be found in [@ramsay2009introduction].
+
+## Packages
+We will use the following packages in the tutorial, so we will call them using the `library()` function. 
+
+```{r packages, message=F, warning=F}
+library(readxl)
+library(tidyverse)
+library(fda)
+library(gganimate)
+library(tidyfun)
+library(reshape2)
+```
+
+note: If these are not installed, we can install them by:
+```{r, eval=F}
+install.packages(c("readxl", "tidyverse", "fda", "gganimate", "devtools"))
+devtools::install_github("tidyfun/tidyfun")
+```
+
+## Data
+
+The data used is supplementary to [@nematollahi2016inter] and can be downloaded from [here](https://doi.org/10.1371/journal.pone.0149837.s002). Make sure that the file `s2 Data.xlsx` is stored in your working directory. If you're unsure of what directory that is, type the command:
+
+```{r, eval=FALSE}
+getwd()
+```
+
+We'll use the left knee joint angle curves for the injured (ACLD) and healthy groups of subjects which are stored in the third and fourth sheets respectively.
+
+```{r data imp}
+S2_Data_ACLD <- read_excel("S2 Data.xlsx", sheet = 3, skip=1, col_names = paste("ACLD",1:23))
+S2_Data_healthy <- read_excel("S2 Data.xlsx", sheet = 4, skip=1, col_names = paste("healthy",1:23))
+left_knee = as.matrix(bind_cols(S2_Data_ACLD, S2_Data_healthy))
+```
+
+We can plot the data and see what it looks like:
+
+```{r}
+time = 1:100
+left_knee_df <- tibble(sub_num=paste("sub",rep(1:23,2)), group_num=c(rep("ACLD",23),rep("Healthy",23)))
+left_knee_df$angle <- tfd(t(left_knee), arg = time) 
+
+theme_set(theme_bw())
+
+left_knee_df %>%
+  ggplot() +
+  geom_spaghetti(aes(y = angle, col = sub_num)) +
+  facet_wrap(~ group_num)+
+  theme(legend.position = "none",
+        strip.text = element_text(size=14),
+        axis.text = element_text(size=10),
+        axis.title = element_text(size=14))+
+  labs(x="Normalised Time (%)", y="Angle (Deg)")
+```
+
+## Smoothing
+
+The curves are already smooth (possibly a result of being averaged) so we can choose a B-Spline basis and a small value for the smoothing penalty parameter ($\lambda=10^{-5}$).
+```{r, echo=T}
+ang_basis <- create.bspline.basis(rangeval = range(time), norder = 4, nbasis = 102, breaks = time)
+my_spar <- fdPar(fdobj = ang_basis, Lfdobj = int2Lfd(2), lambda = 1e-5)
+angle_smooth <- smooth.basis(argvals = time, y = left_knee, fdParobj = my_spar)
+```
+
+# Landmark Registration
+## Identifying Landmarks
+
+As can be seen, the curves appear to have a common feature of a peak arround the middle stage. The timing of the peaks differs (phase variation) as does the height (amplitude). In an effort to separate out amplitude and phase variation we want to find a transformation of time for each curves such that each curve is 'aligned' at the their peak, which we refer to as a landmark.
+
+The landmarks can be picked out from the plot of the functions (left) or their derivative (below) below.
+
+```{r, echo=T, fig.width=10}
+par(mfrow=c(1,2))
+p1=plot.fd(angle_smooth$fd, xlab = "Normalised Time (%)", ylab = "Angle (Deg)", main= "Knee Angle")
+p2=plot.fd(angle_smooth$fd, Lfdobj = 1, xlab = "Normalised Time (%)", ylab = "Angle (Deg)", main="Derivative")
+```
+
+Landmarks are commonly picked out at the level of the derivative. Here we'll identify the landmark timing $t_i$ for the curve $i$ as the time at which the derivative crosses 0 with a negative slope.
+
+To identify the landmark for each curve I have used the `locator()` function which reads the position of the graphics cursor when the mouse button is pressed (see below video).
+
+<center>
+![](locator function.mov)
+</center>
+
+The code to perform this is here:
+
+```{r, eval=F}
+# not evaluated (in RMarkdown)
+veloctiyfun <- deriv.fd(angle_smooth$fd,1)
+nsubjects <- ncol(left_knee)
+landmarks <- matrix(0, nrow=nsubjects, ncol=1)
+par(mfrow=c(1,1), ask=T)
+icase=1
+for(icase in 1:nsubjects){
+  velveci <- predict(veloctiyfun[icase], time)
+  plot(time, velveci, "l", main=paste("case", icase),
+       xlab="time", ylab="angle", ylim=c(-1.2,2.2))
+  lines(c(1,100), c(0,0), lty=2, lwd=1.2)
+  my_loc = locator(n=1)
+  landmarks[icase]=my_loc$x[1]
+}
+```
+
+I've for the purpose I've saved the landmarks in a csv file [here]("https://github.com/edwardgunning/Registration/blob/master/landmarks.csv") and will read them in, but I would reccomened exploring the `locator` function with the above code if you are following in an R script. We'll now read the the csv of the landmarks in:
+
+```{r, warning=F, message=F}
+landmarks <- read_csv("landmarks.csv")
+head(landmarks)
+landmarks <- landmarks[["V1"]]
+mean(landmarks)
+```
+
+
+### Visualising the Landmarks
+
+```{r echo=TRUE}
+eval_matrix = matrix(data = landmarks, ncol = length(landmarks), nrow = 1)
+landmark_val = eval.fd(evalarg = eval_matrix, fdobj = angle_smooth$fd, Lfdobj = 1) #these should roughgly be zero
+
+landmark_df <- data.frame(sub_num=paste("sub",rep(1:23,2)), group_num=c(rep("ACLD",23), rep("Healthy",23)), landmark_time=landmarks, landmark_value = as.vector(landmark_val))
+
+derivative_curves <- data.frame(sub_num=paste("sub",rep(1:23,2)), group_num=c(rep("ACLD",23), rep("Healthy",23)), t(eval.fd(evalarg = time, fdobj = angle_smooth$fd, Lfdobj = 1)))
+colnames(derivative_curves) <- c("sub_num", "group_num", 1:100)
+derivative_curves <- derivative_curves %>%
+  melt(id.vars = c("sub_num", "group_num"), value.name = "angle", variable.name="time") %>%
+  mutate(time=as.numeric(time))
+
+derivative_curves %>%
+  ggplot(aes(color=sub_num))+
+  facet_wrap(~group_num)+
+    geom_hline(yintercept = 0, linetype="dashed", size=1, alpha=0.5)+
+  geom_line(aes(x=time, y=angle))+
+  geom_point(data=landmark_df, aes(x=landmark_time, y=landmark_value), size=5, pch=18)+
+  theme(legend.position = "none",
+        strip.text = element_text(size=14),
+        axis.text = element_text(size=10),
+        axis.title = element_text(size=14))+
+  labs(x="Normalised Time (%)", y="Angle (Deg)")
+```
+
+The diamond shape should sit on the landmark where the derivative crosses zero, it looks as if we have done reasonably well here.
+
+We want to register each of these landmarks to a common 'target' time. A relatively straightforward choice for this is the mean landmark time.
+
+```{r, echo=T}
+derivative_curves %>%
+  ggplot(aes(color=sub_num))+
+  facet_wrap(~group_num)+
+    geom_hline(yintercept = 0, linetype="dashed", size=1, alpha=0.5)+
+  geom_line(aes(x=time, y=angle), alpha=0.5)+
+  geom_point(data=landmark_df, aes(x=landmark_time, y=landmark_value), size=5, pch=18, alpha=0.5)+
+  geom_point(aes(x=mean(landmarks), y=0), inherit.aes = FALSE, pch=13, size=8)+
+  annotate(x=60, y=.7, geom = "text", label="Target \n Landmark")+
+  geom_curve(aes(x = x1, y = y1, xend = x2, yend = y2),
+  data = data.frame(x1=60, y1=0.55, x2=52, y2=0.15),
+  arrow = arrow(length = unit(0.03, "npc")), inherit.aes = FALSE,curvature = -0.2)+
+  geom_vline(xintercept = mean(landmarks))+
+  theme(legend.position = "none",
+        strip.text = element_text(size=14),
+        axis.text = element_text(size=10),
+        axis.title = element_text(size=14))+
+  labs(x="Normalised Time (%)", y="Angle (Deg)")
+```
+
+# References
